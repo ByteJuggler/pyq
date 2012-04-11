@@ -24,14 +24,16 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 # 15/03/07 - code cleanup; updated Yahoo date format, thanks to Cade Cairns
 # 11/04/12 - 0.7.1 Walter Prins: Fixed exception handling during long runs 
 #            where ctrl-c would get caught by unconditional exception clauses.
-#            Also cleaned up/refactored to 99% pass PyLint, Pep8 and Pychecker.
+#            Fixed regular expression that detects non-existing tickers/data.
+#            Fixed fetching of current quote for multiple tickers. 
+#            Cleaned up/refactored to 99% pass PyLint, Pep8 and Pychecker.
 
 import sys, re, traceback, getopt, urllib, anydbm, time
 
 Y2KCUTOFF = 60
 __version__ = "0.7.1"
-CACHE = 'stocks2.db'
-DEBUG = 2
+CACHE = 'stocks.db'
+DEBUG = 1
 
 
 def debug_print(level, msg):
@@ -40,7 +42,7 @@ def debug_print(level, msg):
     setting DEBUG = 0 will disable all debug output while higher values
     will increase debug output successively. """
     if DEBUG >= level:
-        print msg
+        print >> sys.stderr, msg 
 
 
 def print_header():
@@ -221,6 +223,9 @@ def get_rate(startdate, enddate, ticker):
             result.append(line)
     return result
 
+class TickerDataNotFound(Exception):
+    """Exception that is raised when Yahoo reports ticker/data not found"""
+    pass
 
 def get_ticker(startdate, enddate, ticker):
     """Get historical ticker data for the specified ticker as on Yahoo
@@ -245,13 +250,16 @@ def get_ticker(startdate, enddate, ticker):
         ('ignore', '.csv'),)
     query = ['%s=%s' % (var, str(val)) for (var, val) in query]
     query = '&'.join(query)
-    urldata = urllib.urlopen(url + '?' + query).read()
+    url = url + '?' + query
+    debug_print(3, '# URL: %s' % url )    
+    urldata = urllib.urlopen(url).read()
+    debug_print(3, '# Result: %s' % urldata )
     lines = split_lines(urldata)
-    if re.match('no prices|Not Found', lines[0], re.I):
-        debug_print(2, '# No prices found for ticker %s, range %s - %s'
-                    % (ticker, startdate, enddate)
-                   )
-        return
+    match = re.search('no prices|404 Not Found', urldata, re.I)
+    if not match is None:
+        raise TickerDataNotFound(
+            '# Ticker/Ticker data %s for specified date range not found.' 
+               % ticker)
     lines, result = lines[1:], []
     for line in lines:
         line = line.split(',')
@@ -321,7 +329,7 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
     return result
 
 
-def get_tickers(startdate, enddate, tickers, forcefailed=0):
+def get_tickers(startdate, enddate, tickers, forcefailed=-2):
     """Get tickers.
         startdate, enddate = yyyymmdd starting and ending
         tickers = list of symbol strings
@@ -332,26 +340,35 @@ def get_tickers(startdate, enddate, tickers, forcefailed=0):
             -2 : ignore cache entirely, refresh ALL data points"""
     result = []
     for ticker in tickers:
-        result += get_cached_ticker(startdate, enddate, ticker, forcefailed)
+        try:
+            result.extend(get_cached_ticker(
+                startdate, enddate, ticker, forcefailed))
+        except TickerDataNotFound:
+            errmsg = ("# Failed to find historical %s data between %s and %s." 
+                  % (ticker, startdate, enddate))
+            print >> sys.stderr, errmsg
     return result
 
 
 def get_tickers_now_chunk(tickers):
     """Get current value of specified tickers directly from Yahoo."""
     url = 'http://finance.yahoo.com/d/quotes.csv?%s' % urllib.urlencode(
-            {'s': ''.join(tickers), 'f': 'sohgpv', 'e': '.csv'})
+            {'s': '+'.join(tickers), 'f': 'sohgpv', 'e': '.csv'})
+    debug_print(3, '# URL: %s' % url )
     urldata = urllib.urlopen(url).read()
+    debug_print(3, '# Result: %s' % urldata )    
     lines, datetime, result = split_lines(urldata), time.localtime(), []
     for line in lines:
         line = line.split(',')
         result.append(
-            [(line[0][1:-1]).lower(), '%4d%02d%02d' % datetime[0:3]] + line[1:]
+            [(line[0][1:-1]), '%4d%02d%02d' % datetime[0:3]] + line[1:]
             )
     return result
 
 
 def get_tickers_now(tickers):
     """Get current value of specified tickers directly from Yahoo."""
+    debug_print(3, "# get_tickers_now(%s)" % tickers )     
     result = []
     while tickers:
         result += get_tickers_now_chunk(tickers[:150])
@@ -389,7 +406,7 @@ def arg_tickers(args):
     tickers = []
     for arg in args:
         if not is_int(arg):
-            tickers.append(arg)
+            tickers.append(arg.upper())
     return tickers
 
 
