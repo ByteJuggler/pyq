@@ -27,11 +27,12 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 #            Fixed regular expression that detects non-existing tickers/data.
 #            Fixed fetching of current quote for multiple tickers. 
 #            Cleaned up/refactored to 99% pass PyLint, Pep8 and Pychecker.
-# 13/04/12   0.7.2 WP: Modified enddate to default to current date if 
-#            specified as 0. Replaced time module with datetime to fix handling
+# 13/04/12   0.7.2 WP: Start/End date specified as 0 assumes todays date. 
+#            Replaced time module with datetime to fix handling
 #            of dates prior to 01/01/1970. (E.g. ticker ^DJI starts 19281001.)
 #            Fixed 2 regressions from 0.7.1. 
-#            Changed default location of cache.db to script location.
+#            Changed default location of cache.db to script location so running
+#            the script from different locations will use the same cache.
 
 import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 
@@ -79,7 +80,8 @@ Usage: pyQ [-i] [start_date [end_date]] ticker [ticker...]
     -r:n, --retryfailed=n Retry failed request control value.
 
     - date formats are yyyymmdd
-    - if enddate is omitted, it is assume to be the same as startdate
+    - if start and/or enddate is specified as 0 they assume todays date.    
+    - if enddate is omitted, it is assumed to be the same as startdate
     - if startdate is omitted, we use *current* stock tables and otherwise, use
         historical stock tables. Current stock tables will give previous close
         price before market closing time.)
@@ -409,10 +411,12 @@ def arg_startdate(args):
 
 def arg_enddate(args):
     """Parse the enddate from the command line."""
-    #enddate = arg_startdate(args)
-    enddate = datetime.date.today().strftime('%Y%m%d')    
-    if len(args) >= 2 and is_int(args[1]) and int(args[1]) > 0:
-        enddate = args[1]
+    enddate = arg_startdate(args)    
+    if len(args) >= 2 and is_int(args[1]):
+        if int(args[1]) == 0:
+            enddate = datetime.date.today().strftime('%Y%m%d')
+        else:
+            enddate = args[1]
     debug_print(1, "Enddate: %s" % enddate)        
     return enddate
 
