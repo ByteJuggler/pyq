@@ -33,11 +33,17 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 #            Fixed 2 regressions from 0.7.1. 
 #            Changed default location of cache.db to script location so running
 #            the script from different locations will use the same cache.
+# 06/07/12   - Added support for scraping quotes directly off the web page for 
+#              tickers that do not support download via the ichart URL but does 
+#              support display of data (e.g. ^DJI)
+#            - Added a feature whereby data will be retrieved for todays day 
+#              from the live quote page if not available in the history. 
+#            - A few other tweaks and fixes.
 
 import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 
 Y2KCUTOFF = 60
-__version__ = "0.7.2"
+__version__ = "0.7.3"
 CACHE = 'stocks.db'
 DEBUG = 1
 
