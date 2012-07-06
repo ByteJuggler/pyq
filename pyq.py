@@ -45,7 +45,7 @@ import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 Y2KCUTOFF = 60
 __version__ = "0.7.3"
 CACHE = 'stocks.db'
-DEBUG = 1
+DEBUG = 0 #Set to 1 or higher for successively more debug information.
 
 
 def debug_print(level, msg):
