@@ -39,11 +39,15 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 #            - Added a feature whereby data will be retrieved for todays day 
 #              from the live quote page if not available in the history. 
 #            - A few other tweaks and fixes.
+# 07/07/12   - Modified Yahoo webpage parser to deal with thousand seperators
+#              in long numbers.
+#            - Ensure dividend declaration lines get stripped out properly
+
 
 import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 
 Y2KCUTOFF = 60
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 CACHE = 'stocks.db'
 DEBUG = 0 #Set to 1 or higher for successively more debug information.
 
@@ -259,6 +263,8 @@ class YahooHTMLPriceTableParser(HTMLParser):
         self.table = False
         self.prices = False
         self.row = None
+        self.colno = 0
+        self.rowno = 0
         self.output = []
         
     def handle_starttag(self, tag, attrs):
@@ -268,7 +274,9 @@ class YahooHTMLPriceTableParser(HTMLParser):
         if self.table and self.prices:
             debug_print(5, "Encountered a start tag: %s" % tag)            
             if tag == 'tr':
-                self.row = [self.ticker]             
+                self.row = [self.ticker]
+                self.colno = 1
+                self.rowno += 1             
                         
     def handle_endtag(self, tag):
         if tag == 'table':
@@ -277,27 +285,32 @@ class YahooHTMLPriceTableParser(HTMLParser):
         if self.table and self.prices:
             debug_print(5, "Encountered an end tag : %s" % tag)
             if tag == 'tr':
-                if self.row != None:
-                    if self.row[1] != 'Date':
-                        self.row[1] = datetime.datetime.strptime(self.row[1], '%b %d, %Y').strftime('%Y%m%d')
-                    self.row[6] = self.row[6].replace(',','')
+                if self.row != None and self.row != [self.ticker]:
                     self.output.append(self.row)
-                    self.row = None             
+                    self.row = None
+            if tag == 'td' or tag == 'th':
+                self.colno += 1             
             
     def handle_data(self, data):
         if data == 'Prices':
             self.prices = True
         if self.table and self.prices:
             debug_print(5,"Encountered some data : %s" % data)
-            if not self.row is None:
-                if data.startswith('Close price adjusted for'):
-                    self.row = None
-                else: 
-                    data = data.strip()                      
-                    self.row.append(data)
+            data = data.strip()            
+            if (data.startswith('Close price adjusted for') 
+                or data == '*' #* = dividend comment line
+                or data.endswith('Dividend')): # Dividend data line
+                self.row = None            
+            if not self.row is None:                            
+                if self.rowno >= 3:
+                    if self.colno == 1: 
+                        data = datetime.datetime.strptime(data, '%b %d, %Y').strftime('%Y%m%d')                        
+                    if self.colno >= 2:
+                        data = data.replace(',','')                                             
+                self.row.append(data)
                 
-
-def get_yahoo_ticker_historical_alternate(startdate, enddate, ticker):
+                    
+def get_yahoo_ticker_historical_webscrape(startdate, enddate, ticker):
     """Get historical ticker data for the specified date from Yahoo
     using the normal display page URL http://http://finance.yahoo.com/q/hp?
     by scraping/parsing the HTML page itself.  We are forced to resorting
@@ -337,18 +350,19 @@ def get_yahoo_ticker_historical_alternate(startdate, enddate, ticker):
     parser = YahooHTMLPriceTableParser(ticker)
     parser.feed(urldata) 
     
-    result = parser.output[1:]
+    result = parser.output[1:] 
+    #result.sort(key=itemgetter(1))
     return result
 
 
-def get_yahoo_ticker_historical(startdate, enddate, ticker):
+def get_yahoo_ticker_historical(startdate, enddate, ticker, allow_webscrape=True):
     """Get historical ticker data for the specified date from Yahoo
     using the http://ichart.finance.yahoo.com/table.csv download URL.
     Note, this URL doesn't work for all tickers, for example ^DJI.
     This is because Yahoo is not licensed to allow download for some
     tickers.  As a consequence, the routine will also fall back to
     a direct scrape of the displayed page if the http://ichart URL
-    fails. See get_yahoo_ticker_historical_alternate.
+    fails. See get_yahoo_ticker_historical_webscrape.
     """
     debug_print(1, 'Querying Yahoo! history for %s (%s-%s)' %
                    (ticker, startdate, enddate))
@@ -369,14 +383,19 @@ def get_yahoo_ticker_historical(startdate, enddate, ticker):
     query = '&'.join(query)
     url = url + '?' + query
     debug_print(3, 'URL: %s' % url )    
-    urldata = urllib.urlopen(url).read()
+    urldata = urllib.urlopen(url).read().strip()
     debug_print(4, 'Result: %s' % urldata )
     lines = split_lines(urldata)
     debug_print(5, 'Split lines: %s' % lines )    
     match = re.search('no prices|404 Not Found', urldata, re.I)
     if not match is None:
-        #If we fail using ichart URL then try scraping direct from web page:
-        return get_yahoo_ticker_historical_alternate(startdate, enddate, ticker)
+        #If we fail using ichart URL then try scraping direct from web page, if allowed:
+        if allow_webscrape:
+            return get_yahoo_ticker_historical_webscrape(startdate, enddate, ticker)
+        else:
+            raise TickerDataNotFound(
+                'Ticker/Ticker data %s for specified date range not found or not available.' 
+                % ticker)            
     
     lines, result = lines[1:], []
     for line in lines:
