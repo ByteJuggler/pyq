@@ -22,37 +22,39 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 # 11/01/07 - Updated by Ehud Ben-Reuven, Historical currency exchnage tickers
 #            (e.g. USDEUR=X) are retrieved from www.oanda.com
 # 15/03/07 - code cleanup; updated Yahoo date format, thanks to Cade Cairns
-# 11/04/12 - 0.7.1 Walter Prins: Fixed exception handling during long runs 
+# 11/04/12 - 0.7.1 Walter Prins: Fixed exception handling during long runs
 #            where ctrl-c would get caught by unconditional exception clauses.
 #            Fixed regular expression that detects non-existing tickers/data.
-#            Fixed fetching of current quote for multiple tickers. 
+#            Fixed fetching of current quote for multiple tickers.
 #            Cleaned up/refactored to 99% pass PyLint, Pep8 and Pychecker.
-# 13/04/12   0.7.2 WP: Start/End date specified as 0 assumes todays date. 
+# 13/04/12   0.7.2 WP: Start/End date specified as 0 assumes todays date.
 #            Replaced time module with datetime to fix handling
 #            of dates prior to 01/01/1970. (E.g. ticker ^DJI starts 19281001.)
-#            Fixed 2 regressions from 0.7.1. 
+#            Fixed 2 regressions from 0.7.1.
 #            Changed default location of cache.db to script location so running
 #            the script from different locations will use the same cache.
-# 06/07/12   - Added support for scraping quotes directly off the web page for 
-#              tickers that do not support download via the ichart URL but does 
+# 06/07/12   - Added support for scraping quotes directly off the web page for
+#              tickers that do not support download via the ichart URL but does
 #              support display of data (e.g. ^DJI)
-#            - Added a feature whereby data will be retrieved for todays day 
-#              from the live quote page if not available in the history. 
+#            - Added a feature whereby data will be retrieved for todays day
+#              from the live quote page if not available in the history.
 #            - A few other tweaks and fixes.
 # 07/07/12   - Modified Yahoo webpage parser to deal with thousand seperators
 #              in long numbers.
 #            - Ensure dividend declaration lines get stripped out properly
-
+# 28/10/12   - Tidied up code (PEP8/Lint)
+#            - Added a check for "N/A" values from the live site to prevent
+#              same from being output.
 
 import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 
 Y2KCUTOFF = 60
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 CACHE = 'stocks.db'
 DEBUG = 0 #Set to 1 or higher for successively more debug information.
 
 
-def debug_print(level, msg):
+def dbg_print(level, msg):
     """ Utility method to handle debug output.  Messages are only printed
     if the DEBUG level is equal to or higher than the msg level.  Thus
     setting DEBUG = 0 will disable all debug output while higher values
@@ -62,7 +64,7 @@ def debug_print(level, msg):
             levelstr = '[%d]' % level
         else:
             levelstr = ''
-        print >> sys.stderr, '#%s %s' % (levelstr, msg) 
+        print >> sys.stderr, '#%s %s' % (levelstr, msg)
 
 
 def print_header():
@@ -90,7 +92,7 @@ Usage: pyQ [-i] [start_date [end_date]] ticker [ticker...]
     -r:n, --retryfailed=n Retry failed request control value.
 
     - date formats are yyyymmdd
-    - if start and/or enddate is specified as 0 they assume todays date.    
+    - if start and/or enddate is specified as 0 they assume todays date.
     - if enddate is omitted, it is assumed to be the same as startdate
     - if startdate is omitted, we use *current* stock tables and otherwise, use
         historical stock tables. Current stock tables will give previous close
@@ -100,13 +102,13 @@ Usage: pyQ [-i] [start_date [end_date]] ticker [ticker...]
             =0 : do not retry failed data points
             >0 : retry failed data points n times
             -1 : retry failed data points, reset retry count
-            -2 : ignore cache entirely, refresh ALL data points    
+            -2 : ignore cache entirely, refresh ALL data points
     - output format: "ticker, date (yyyymmdd), open, high, low, close, vol"
     - currency exchange rates are also available, but only historically.
         The yahoo ticker for an exchange rate is of the format USDEUR=X. The
         output format is "ticker, date, exchange".
 
-    Send comments, suggestions and bug reports to <rimon@acm.org>
+    Send comments, suggestions and bug reports to <wprins@gmail.com>
 """
     sys.exit(0)
 
@@ -160,17 +162,20 @@ def dd_mmm_yy2yyyymmdd(dd_mmm_yy):
 
 
 def all_dates(startdate, enddate):
-    """Return all dates in ascending order. Inputs in yyyymmdd format"""
+    """Return all dates between and including startdate and enddate  in
+    ascending order.  Inputs in yyyymmdd format. Excludes weekends."""
     if int(startdate) > int(enddate):
         raise IndexError('startdate must be smaller than enddate')
-        
+
     startdate = datetime.datetime.strptime(startdate, '%Y%m%d')
-    enddate = (datetime.datetime.strptime(enddate, '%Y%m%d') 
+    enddate = (datetime.datetime.strptime(enddate, '%Y%m%d')
                + datetime.timedelta(days=1))
     dates = []
     while startdate < enddate:
-        dates.append(startdate.strftime('%Y%m%d'))
+        if not startdate.weekday() in (5, 6):
+            dates.append(startdate.strftime('%Y%m%d'))
         startdate += datetime.timedelta(days=1)
+
     return dates
 
 
@@ -179,30 +184,32 @@ def agg_dates(dates):
     if not dates:
         return []
     aggs = []
-    dates = [int(date) for date in dates]
+    dates = [datetime.datetime.strptime(date, '%Y%m%d') for date in dates]
     dates.sort()
     high = dates.pop(0)
     low = high
     for date in dates:
-        if date == high + 1:
+        if date == high + datetime.timedelta(days=3) and date.weekday()==0:
+            high = date
+        elif date == high + datetime.timedelta(days=1):
             high = date
         else:
-            aggs.append((low, high,))
+            aggs.append(( low.strftime('%Y%m%d'), high.strftime('%Y%m%d'),))
             high = date
             low = high
-    aggs.append((low, high,))
-    return [(str(low), str(high)) for (low, high) in aggs]
+    aggs.append((low.strftime('%Y%m%d'), high.strftime('%Y%m%d'),))
+    return aggs
 
 
 def get_oanda_fxrate(startdate, enddate, ticker):
     """Retrieve FX exchange closing rates for the pair specified as "ZZZYYY=X"
     where ZZZ is the one currency and YYY is the other currency. Only the
     closing rate is fetched as that's all that's available."""
-    debug_print(1, 'Querying Oanda historical for %s (%s-%s)' %
-                   (ticker, startdate, enddate))    
+    dbg_print(1, 'Querying Oanda historical for %s (%s-%s)' %
+                   (ticker, startdate, enddate))
     if not (len(ticker) == 8 and ticker.endswith('=X')):
         raise Exception('Illegal FX rate ticker')
-    
+
     cur1, cur2 = ticker[0:3], ticker[3:6]
 
     def yyyymmdd2mmddyy(yyyymmdd):
@@ -256,7 +263,7 @@ class TickerDataNotFound(Exception):
 
 from HTMLParser import HTMLParser
 class YahooHTMLPriceTableParser(HTMLParser):
-    """Parse the quote data from the Yahoo quote page HTML soup""" 
+    """Parse the quote data from the Yahoo quote page HTML soup"""
     def __init__(self, ticker):
         HTMLParser.__init__(self)
         self.ticker = ticker
@@ -266,61 +273,64 @@ class YahooHTMLPriceTableParser(HTMLParser):
         self.colno = 0
         self.rowno = 0
         self.output = []
-        
-    def handle_starttag(self, tag, attrs):
+
+    def handle_starttag(self, tag, _): # third param "attrs" not used
         if tag == 'table':
-            if self.prices and self.output == []:            
+            if self.prices and self.output == []:
                 self.table = True
         if self.table and self.prices:
-            debug_print(5, "Encountered a start tag: %s" % tag)            
+            dbg_print(5, "Encountered a start tag: %s" % tag)
             if tag == 'tr':
                 self.row = [self.ticker]
                 self.colno = 1
-                self.rowno += 1             
-                        
+                self.rowno += 1
+
     def handle_endtag(self, tag):
         if tag == 'table':
-            if self.table: debug_print(5, "Encountered an end tag : %s" % tag)           
-            self.table = False        
+            if self.table:
+                dbg_print(5, "Encountered an end tag : %s" % tag)
+            self.table = False
         if self.table and self.prices:
-            debug_print(5, "Encountered an end tag : %s" % tag)
+            dbg_print(5, "Encountered an end tag : %s" % tag)
             if tag == 'tr':
                 if self.row != None and self.row != [self.ticker]:
                     self.output.append(self.row)
                     self.row = None
             if tag == 'td' or tag == 'th':
-                self.colno += 1             
-            
+                self.colno += 1
+
     def handle_data(self, data):
         if data == 'Prices':
             self.prices = True
         if self.table and self.prices:
-            debug_print(5,"Encountered some data : %s" % data)
-            data = data.strip()            
-            if (data.startswith('Close price adjusted for') 
+            dbg_print(5,"Encountered some data : %s" % data)
+            data = data.strip()
+            if (data.startswith('Close price adjusted for')
                 or data == '*' #* = dividend comment line
                 or data.endswith('Dividend')): # Dividend data line
-                self.row = None            
-            if not self.row is None:                            
+                self.row = None
+            if not self.row is None:
                 if self.rowno >= 3:
-                    if self.colno == 1: 
-                        data = datetime.datetime.strptime(data, '%b %d, %Y').strftime('%Y%m%d')                        
+                    if self.colno == 1:
+                        data = datetime.datetime.strptime(
+                            data,'%b %d, %Y').strftime('%Y%m%d')
                     if self.colno >= 2:
-                        data = data.replace(',','')                                             
+                        data = data.replace(',','')
                 self.row.append(data)
-                
-                    
-def get_yahoo_ticker_historical_webscrape(startdate, enddate, ticker):
+
+
+def get_yahoo_ticker_scrape(startdate, enddate, ticker):
     """Get historical ticker data for the specified date from Yahoo
     using the normal display page URL http://http://finance.yahoo.com/q/hp?
     by scraping/parsing the HTML page itself.  We are forced to resorting
     to this scraping because some tickers are not enabled for downloading
-    via the ichart URL, for example "^DJI".  
+    via the ichart URL, for example "^DJI". Example URL:
+    #http://finance.yahoo.com/q/hp?s=^DJI&d=6&e=6&f=2012&g=d&a=0&b=2&c=1992&z=66&y=66
     """
-    debug_print(1, 'Querying Yahoo! website direct for %s (%s-%s)' %
+    dbg_print(1, 'Querying Yahoo! website direct for %s (%s-%s)' %
                    (ticker, startdate, enddate))
     startdate, enddate = parse_date(startdate), parse_date(enddate)
-    #http://finance.yahoo.com/q/hp?s=^DJI&d=6&e=6&f=2012&g=d&a=0&b=2&c=1992&z=66&y=66    
+
     url = 'http://finance.yahoo.com/q/hp'
     query = (
         ('s', ticker),
@@ -337,25 +347,26 @@ def get_yahoo_ticker_historical_webscrape(startdate, enddate, ticker):
     query = ['%s=%s' % (var, str(val)) for (var, val) in query]
     query = '&'.join(query)
     url = url + '?' + query
-    debug_print(3, 'URL: %s' % url )    
+    dbg_print(3, 'URL: %s' % url )
     urldata = urllib.urlopen(url).read()
-    debug_print(4, 'Result: %s' % urldata )
-    
+    dbg_print(4, 'Result: %s' % urldata )
+
     match = re.search('quote data is unavailable', urldata, re.I)
     if not match is None:
         raise TickerDataNotFound(
-            'Ticker/Ticker data %s for specified date range not found or not available.' 
-               % ticker)    
-    
+            ('Ticker/Ticker data %s for specified '+
+             'date range not found or not available.') % ticker)
+
     parser = YahooHTMLPriceTableParser(ticker)
-    parser.feed(urldata) 
-    
-    result = parser.output[1:] 
+    parser.feed(urldata)
+
+    result = parser.output[1:]
     #result.sort(key=itemgetter(1))
     return result
 
 
-def get_yahoo_ticker_historical(startdate, enddate, ticker, allow_webscrape=True):
+def get_yahoo_ticker_historical(startdate, enddate, ticker,
+                                allow_scraping=True):
     """Get historical ticker data for the specified date from Yahoo
     using the http://ichart.finance.yahoo.com/table.csv download URL.
     Note, this URL doesn't work for all tickers, for example ^DJI.
@@ -364,9 +375,10 @@ def get_yahoo_ticker_historical(startdate, enddate, ticker, allow_webscrape=True
     a direct scrape of the displayed page if the http://ichart URL
     fails. See get_yahoo_ticker_historical_webscrape.
     """
-    debug_print(1, 'Querying Yahoo! history for %s (%s-%s)' %
+    dbg_print(1, 'Querying Yahoo! history for %s (%s-%s)' %
                    (ticker, startdate, enddate))
-    parsed_startdate, parsed_enddate = parse_date(startdate), parse_date(enddate)
+    parsed_startdate = parse_date(startdate)
+    parsed_enddate = parse_date(enddate)
     url = 'http://ichart.finance.yahoo.com/table.csv'
     query = (
         ('a', '%02d' % (int(parsed_startdate[1]) - 1)),
@@ -382,21 +394,22 @@ def get_yahoo_ticker_historical(startdate, enddate, ticker, allow_webscrape=True
     query = ['%s=%s' % (var, str(val)) for (var, val) in query]
     query = '&'.join(query)
     url = url + '?' + query
-    debug_print(3, 'URL: %s' % url )    
+    dbg_print(3, 'URL: %s' % url )
     urldata = urllib.urlopen(url).read().strip()
-    debug_print(4, 'Result: %s' % urldata )
+    dbg_print(4, 'Result: %s' % urldata )
     lines = split_lines(urldata)
-    debug_print(5, 'Split lines: %s' % lines )    
+    dbg_print(5, 'Split lines: %s' % lines )
     match = re.search('no prices|404 Not Found', urldata, re.I)
     if not match is None:
-        #If we fail using ichart URL then try scraping direct from web page, if allowed:
-        if allow_webscrape:
-            return get_yahoo_ticker_historical_webscrape(startdate, enddate, ticker)
+        #If we fail using ichart URL then try scraping direct from
+        #web page, if allowed:
+        if allow_scraping:
+            return get_yahoo_ticker_scrape(startdate, enddate, ticker)
         else:
             raise TickerDataNotFound(
-                'Ticker/Ticker data %s for specified date range not found or not available.' 
-                % ticker)            
-    
+                ('Ticker/Ticker data %s for specified date range not found or '+
+                 'not available.') % ticker)
+
     lines, result = lines[1:], []
     for line in lines:
         line = line.split(',')
@@ -413,7 +426,7 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
             >0 : retry failed data points n times
             -1 : retry failed data points, reset retry count
             -2 : ignore cache entirely, refresh ALL data points"""
-    debug_print(1, 'Querying cache for %s (%s-%s), forcefailed=%d' %
+    dbg_print(1, 'Querying cache for %s (%s-%s), forcefailed=%d' %
                    (ticker, startdate, enddate, forcefailed))
     dates = all_dates(startdate, enddate)
     # get from cache
@@ -425,39 +438,40 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
         except KeyError:
             pass
     # forced failed
-    debug_print(3, 'keys from db: %s' % data.keys())
+    dbg_print(3, 'keys from db: %s' % data.keys())
     if forcefailed:
         for key in data.keys():
             if (forcefailed == -2 or
                     (forcefailed == -1 and type(eval(data[key])) == type(0)) or
                     eval(data[key]) < forcefailed):
                 #cause date to be missing, effecting it to be refetched below
-                del data[key] 
+                del data[key]
     # compute missing
     cached = [date for date, ticker in data.keys()]
-    debug_print(3, 'cached: %s' % cached)    
+    dbg_print(3, 'cached: %s' % cached)
     missing = [date for date in dates if date not in cached]
-    debug_print(3, 'missing: %s' % missing)
-    # retry the missing dates    
+    dbg_print(3, 'missing: %s' % missing)
+    # retry the missing dates
     for startdate, enddate in agg_dates(missing):
         try:
             if len(ticker) == 8 and ticker.endswith('=X'):
                 tickerdatalist = get_oanda_fxrate(startdate, enddate, ticker)
-            else:            
-                tickerdatalist = get_yahoo_ticker_historical(startdate, enddate, ticker)
-            debug_print(3, 'data from web: %s' % tickerdatalist)            
+            else:
+                tickerdatalist = get_yahoo_ticker_historical(startdate,
+                                                             enddate, ticker)
+            dbg_print(3, 'data from web: %s' % tickerdatalist)
             for row in tickerdatalist:
                 _, date, datum = row[0], row[1], row[2:]
                 r_datum = repr(datum)
                 data[(date, ticker)] = cache_db[repr((date, ticker))] = r_datum
         except TickerDataNotFound:
-            errmsg = ("Data for %s between %s and %s not found or not available." 
-                  % (ticker, startdate, enddate))
+            errmsg = "Data for %s between %s and %s not found or not available."
+            errmsg = errmsg % (ticker, startdate, enddate)
             print >> sys.stderr, errmsg
     # failed
     cached = [date for date, row in data.keys()]
     failed = [date for date in missing if date not in cached]
-    debug_print(3, 'failed: %s' % failed)    
+    dbg_print(3, 'failed: %s' % failed)
     for date in failed:
         try:
             times = eval(cache_db[repr((date, ticker))])
@@ -471,14 +485,14 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
     # result
     result = []
     for date in dates:
-        datum = eval(data[(date, ticker)])        
+        datum = eval(data[(date, ticker)])
         if type(datum) != type(0):
             result.append([ticker, date] + datum)
         elif date == datetime.date.today().strftime('%Y%m%d'):
             datum = get_yahoo_tickers_live([ticker])
             if datum != []:
-                debug_print(3, 'Live Datum retrieved: %s = %s' % (date, datum[0]))            
-                result.append(datum[0]) 
+                dbg_print(3, 'Live Datum retrieved: %s = %s' % (date, datum[0]))
+                result.append(datum[0])
     return result
 
 
@@ -500,41 +514,48 @@ def get_tickers(startdate, enddate, tickers, forcefailed=0):
 
 def _get_yahoo_tickers_live(tickers):
     """Get current value of specified tickers directly from Yahoo."""
-    debug_print(1, 'Querying Yahoo! live for %s' % (tickers))    
+    dbg_print(1, 'Querying Yahoo! live for %s' % (tickers))
     # For a reference to how this URL is constructed, see here:
     #http://www.gummy-stuff.org/Yahoo-data.htm
     url = 'http://finance.yahoo.com/d/quotes.csv?%s' % urllib.urlencode(
             {'s': '+'.join(tickers), 'f': 'sohgl1v', 'e': '.csv'})
-    debug_print(3, 'URL: %s' % url )
+    dbg_print(3, 'URL: %s' % url )
     urldata = urllib.urlopen(url).read().strip()
-    debug_print(3, 'Result: %s' % urldata )
-        
+    dbg_print(3, 'Result: %s' % urldata )
+
     if not re.match("Missing Symbols List", urldata, re.I) is None:
         raise TickerDataNotFound(
             'None of the tickers specified has live quotes available.')
-        
-    lines = split_lines(urldata) 
-    today = datetime.date.today() 
-    result = [] 
-    for line in lines:       
+
+    lines = split_lines(urldata)
+    today = datetime.date.today()
+    result = []
+    for line in lines:
         line = line.split(',')
-        result.append(
-            [
-             (line[0][1:-1]),  #Ticker 
-             today.strftime('%Y%m%d'),  #Date
-             line[1], #open 
-             line[2], #high
-             line[3], #low
-             #str((float(line[4])+float(line[5]))/2) #avg of current bid & ask as close
-             line[4], #last trade price (in lieu of close) 
-            ] + line[5:] # the rest (volume)
-            )
+        if 'N/A' in (line[1], line[2], line[3], line[4]):
+            dbg_print(1, 'Warning: Data for '
+                        +line[0][1:-1]+','
+                        +today.strftime('%Y%m%d')
+                        +' contains N/A values. Excluding.' )
+        else:
+            result.append(
+                [
+                 (line[0][1:-1]),  #Ticker
+                 today.strftime('%Y%m%d'),  #Date
+                 line[1], #open
+                 line[2], #high
+                 line[3], #low
+                   #avg of current bid & ask as close:
+                   #str((float(line[4])+float(line[5]))/2)
+                 line[4], #last trade price (in lieu of close)
+                ] + line[5:] # the rest (volume)
+                )
     return result
 
 
 def get_yahoo_tickers_live(tickers):
     """Get current value of specified tickers directly from Yahoo, in batches
-    of 150 tickers at a time."""    
+    of 150 tickers at a time."""
     result = []
     while tickers:
         try:
@@ -551,19 +572,19 @@ def arg_startdate(args):
     startdate = datetime.date.today().strftime('%Y%m%d')
     if len(args) >= 1 and is_int(args[0]) and int(args[0]) > 0:
         startdate = args[0]
-    debug_print(1, "Startdate: %s" % startdate)        
+    dbg_print(1, "Startdate: %s" % startdate)
     return startdate
 
 
 def arg_enddate(args):
     """Parse the enddate from the command line."""
-    enddate = arg_startdate(args)    
+    enddate = arg_startdate(args)
     if len(args) >= 2 and is_int(args[1]):
         if int(args[1]) == 0:
             enddate = datetime.date.today().strftime('%Y%m%d')
         else:
             enddate = args[1]
-    debug_print(1, "Enddate: %s" % enddate)        
+    dbg_print(1, "Enddate: %s" % enddate)
     return enddate
 
 
@@ -572,7 +593,7 @@ def arg_fetchlive(args):
     fetchlive = 1
     if len(args) >= 1 and is_int(args[0]):
         fetchlive = 0
-    debug_print(1, "Fetchlive: %s" % fetchlive)        
+    dbg_print(1, "Fetchlive: %s" % fetchlive)
     return fetchlive
 
 
@@ -582,7 +603,7 @@ def arg_tickers(args):
     for arg in args:
         if not is_int(arg):
             tickers.append(arg.upper())
-    debug_print(1, "Tickers: %s" % tickers)            
+    dbg_print(1, "Tickers: %s" % tickers)
     return tickers
 
 
@@ -607,10 +628,10 @@ def main():
             exit_version()
         if option in ("-i", "--stdin"):
             stdin_tickers = split_lines(sys.stdin.read())
-            debug_print(1, "Reading tickers from stdin.")          
+            dbg_print(1, "Reading tickers from stdin.")
         if option in ("-r", "--retryfailed"):
             retryfailed = int(optarg)
-            debug_print(1, "Using cache retry value: %s" % retryfailed)
+            dbg_print(1, "Using cache retry value: %s" % retryfailed)
 
     startdate = arg_startdate(args)
     enddate = arg_enddate(args)
@@ -635,4 +656,4 @@ try:
         main()
 except KeyboardInterrupt:
     traceback.print_exc()
-    debug_print(1, 'Break!')
+    dbg_print(1, 'Break!')

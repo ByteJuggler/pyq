@@ -1,11 +1,16 @@
-REM By default this batch file will not auto retry any
-REM missing data values since the long date ranges make
-REM this generally impractical.  However if we want to 
-REM redo the cache from scratch, then feel free to change
-REM this:
+REM By setting retry to zero you basically are reading only from the cache
+REM (unless the ticker has never been retrieved by PyQ before).
+REM So this script basically extracts all the available data for the tickers
+REM below into CSV files from the cache, the idea being you refresh the 
+REM cache elsewhere.
 set retry=0
 
+pyq.py -r%retry% 19840402 0 "^FTSE" >".\CSV\^FTSE.csv"
+pyq.py -r%retry% 20020813 0 "ISF.L" >".\CSV\ISF.L.csv"
+pyq.py -r%retry% 20000104 0 "^FTMC" >".\CSV\^FTMC.csv"
+pyq.py -r%retry% 20040330 0 "MIDD.L" >".\CSV\MIDD.L.csv"
 pyq.py -r%retry% 19281001 0 "^DJI" >".\CSV\^DJI.csv"
+pyq.py -r%retry% 19980120 0 "DIA" >".\CSV\DIA.csv"
 pyq.py -r%retry% 19620102 0 "^TNX" >".\CSV\^TNX.csv"
 pyq.py -r%retry% 19710205 0 "^IXIC" >".\CSV\^IXIC.csv"
 pyq.py -r%retry% 20020606 0 "^STOXX50E" >".\CSV\^STOXX50E.csv"
@@ -15,12 +20,8 @@ pyq.py -r%retry% 19500103 0 "^GSPC" >".\CSV\^GSPC.csv"
 pyq.py -r%retry% 20030101 0 "BP.L" >".\CSV\BP.L.csv"
 pyq.py -r%retry% 19500103 0 "RRL.L" >".\CSV\RRL.L.csv"
 pyq.py -r%retry% 19500103 0 "CEY.L" >".\CSV\CEY.L.csv"
-pyq.py -r%retry% 20000104 0 "^FTMC" >".\CSV\^FTMC.csv"
-pyq.py -r%retry% 19840402 0 "^FTSE" >".\CSV\^FTSE.csv"
 pyq.py -r%retry% 20050811 0 "CF" >".\CSV\CF.csv"
-pyq.py -r%retry% 20020813 0 "ISF.L" >".\CSV\ISF.L.csv"
 pyq.py -r%retry% 20000526 0 "IWM" >".\CSV\IWM.csv"
-pyq.py -r%retry% 20040330 0 "MIDD.L" >".\CSV\MIDD.L.csv"
 pyq.py -r%retry% 19860313 0 "MSFT" >".\CSV\MSFT.csv"
 pyq.py -r%retry% 19620102 0 "IBM" >".\CSV\IBM.csv"
 pyq.py -r%retry% 20051026 0 "NNVC" >".\CSV\NNVC.csv"
@@ -40,6 +41,7 @@ pyq.py -r%retry% 19870910 0 "^RUT" >".\CSV\^RUT.csv"
 pyq.py -r%retry% 19831219 0 "^XAU" >".\CSV\^XAU.csv"
 pyq.py -r%retry% 19830826 0 "^XOI" >".\CSV\^XOI.csv"
 pyq.py -r%retry% 20030101 0 "TSCO.L" >".\CSV\TSCO.L.csv"
+pyq.py -r%retry% 19940218 0 "TSCO" >".\CSV\TSCO.csv"
 pyq.py -r%retry% 19930101 0 "^SOX" >".\CSV\^SOX.csv"
 REM Data not available on Yahoo
 REM pyq.py -r%retry% 19500103 0 "^IXM" >".\CSV\^IXM.csv"
