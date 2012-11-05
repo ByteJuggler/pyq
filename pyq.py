@@ -49,6 +49,7 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 #              that are missing from a query date range that otherwise
 #              succeeded without error are now marked as "NA", which means
 #              they will not be retried as missing on retry attempts.
+# 05/11/2012 - Fixed web-scraping to loop and fetch 66 records at a time.
 
 import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 
@@ -333,39 +334,50 @@ def get_yahoo_ticker_scrape(startdate, enddate, ticker):
     """
     dbg_print(1, 'Querying Yahoo! website direct for %s (%s-%s)' %
                    (ticker, startdate, enddate))
+    num_rows_ubound = len(all_dates(startdate, enddate))
+    dbg_print(3, 'Estimated number of rows to fetch: %d' % num_rows_ubound )
     startdate, enddate = parse_date(startdate), parse_date(enddate)
+    # As Yahoo will only output on the website 66 rows max at a time, we have
+    # to loop to retrieve all the results.  When we get a page with
+    # "quote data not available" we stop.
+    done = False
+    starting_row = 0
+    result = []
+    while not done:
+        url = 'http://finance.yahoo.com/q/hp'
+        query = (
+            ('s', ticker),
+            ('d', '%02d' % (int(enddate[1]) - 1)),
+            ('e', enddate[2]),
+            ('f', enddate[0]),
+            ('g', 'd'),
+            ('a', '%02d' % (int(startdate[1]) - 1)),
+            ('b', startdate[2]),
+            ('c', startdate[0]),
+            ('z', 66), #page controls, no of records per page, 66=max supported
+            ('y', starting_row),
+            )
+        query = ['%s=%s' % (var, str(val)) for (var, val) in query]
+        query = '&'.join(query)
+        url = url + '?' + query
+        dbg_print(3, 'URL: %s' % url )
+        urldata = urllib.urlopen(url).read()
+        dbg_print(4, 'Result: %s' % urldata )
 
-    url = 'http://finance.yahoo.com/q/hp'
-    query = (
-        ('s', ticker),
-        ('d', '%02d' % (int(enddate[1]) - 1)),
-        ('e', enddate[2]),
-        ('f', enddate[0]),
-        ('g', 'd'),
-        ('a', '%02d' % (int(startdate[1]) - 1)),
-        ('b', startdate[2]),
-        ('c', startdate[0]),
-        #('z', 66), #page controls, we don't use it.
-        #('y', 66),
-        )
-    query = ['%s=%s' % (var, str(val)) for (var, val) in query]
-    query = '&'.join(query)
-    url = url + '?' + query
-    dbg_print(3, 'URL: %s' % url )
-    urldata = urllib.urlopen(url).read()
-    dbg_print(4, 'Result: %s' % urldata )
+        match = re.search('quote data is unavailable', urldata, re.I)
+        done = (not match is None) or (starting_row > num_rows_ubound)
 
-    match = re.search('quote data is unavailable', urldata, re.I)
-    if not match is None:
+        if not done:
+            parser = YahooHTMLPriceTableParser(ticker)
+            parser.feed(urldata)
+
+            result.extend(parser.output[1:])
+            starting_row += 66
+
+    if match is None and len(result=0):
         raise TickerDataNotFound(
             ('Ticker/Ticker data %s for specified '+
              'date range not found or not available.') % ticker)
-
-    parser = YahooHTMLPriceTableParser(ticker)
-    parser.feed(urldata)
-
-    result = parser.output[1:]
-    #result.sort(key=itemgetter(1))
     return result
 
 
