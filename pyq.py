@@ -50,6 +50,9 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 #              succeeded without error are now marked as "NA", which means
 #              they will not be retried as missing on retry attempts.
 # 05/11/2012 - Fixed web-scraping to loop and fetch 66 records at a time.
+#              Fixed web-scraping where some data rows on some tickers use
+#              a different date format to the rest (e.g. ^DJT)
+#
 
 import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 
@@ -317,8 +320,13 @@ class YahooHTMLPriceTableParser(HTMLParser):
             if not self.row is None:
                 if self.rowno >= 3:
                     if self.colno == 1:
-                        data = datetime.datetime.strptime(
-                            data,'%b %d, %Y').strftime('%Y%m%d')
+                        try:
+                            data = datetime.datetime.strptime(
+                                data,'%b %d, %Y').strftime('%Y%m%d')
+                        except ValueError:
+                            #Some datarows on Yahoo uses alterante date fmt...
+                            data = datetime.datetime.strptime(
+                                data,'%Y-%m-%d').strftime('%Y%m%d')
                     if self.colno >= 2:
                         data = data.replace(',','')
                 self.row.append(data)
