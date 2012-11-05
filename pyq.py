@@ -45,6 +45,10 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 # 28/10/12   - Tidied up code (PEP8/Lint)
 #            - Added a check for "N/A" values from the live site to prevent
 #              same from being output.
+# 02/11/12   - Improved handling of holidays/not available days.  Data points
+#              that are missing from a query date range that otherwise
+#              succeeded without error are now marked as "NA", which means
+#              they will not be retried as missing on retry attempts.
 
 import sys, re, traceback, getopt, urllib, anydbm, datetime, os
 
@@ -129,8 +133,8 @@ def is_int(i):
 
 
 def split_lines(buf):
-    """Splits the given buffer/line on whitespace/newlines into a list"""
-    return buf.split('\n')
+    """Splits the given buffer on newlines and strips each line"""
+    return [line.strip() for line in buf.split('\n')]
 
 
 def parse_date(yyyymmdd):
@@ -442,12 +446,14 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
     if forcefailed:
         for key in data.keys():
             if (forcefailed == -2 or
-                    (forcefailed == -1 and type(eval(data[key])) == type(0)) or
-                    eval(data[key]) < forcefailed):
+                  (type(eval(data[key])) == type(0)
+                     and (forcefailed == -1 or eval(data[key]) < forcefailed)
+                  )
+                ):
                 #cause date to be missing, effecting it to be refetched below
                 del data[key]
     # compute missing
-    cached = [date for date, ticker in data.keys()]
+    cached = [date for date, _ in data.keys()]
     dbg_print(3, 'cached: %s' % cached)
     missing = [date for date in dates if date not in cached]
     dbg_print(3, 'missing: %s' % missing)
@@ -464,6 +470,15 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
                 _, date, datum = row[0], row[1], row[2:]
                 r_datum = repr(datum)
                 data[(date, ticker)] = cache_db[repr((date, ticker))] = r_datum
+
+            # Mark dates for which Yahoo legitimately aren't
+            # returning data (holidays etc)
+            cached = [date for date, _ in data.keys()]
+            for date in all_dates(startdate, enddate):
+                if date not in cached and date < datetime.date.today().strftime('%Y%m%d'):
+                    dbg_print(3, 'marking date %s as NA in DB for %s' % (date, ticker))
+                    data[(date, ticker)] = cache_db[repr((date, ticker))] = repr('NA')
+            # mark not available
         except TickerDataNotFound:
             errmsg = "Data for %s between %s and %s not found or not available."
             errmsg = errmsg % (ticker, startdate, enddate)
@@ -486,7 +501,7 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
     result = []
     for date in dates:
         datum = eval(data[(date, ticker)])
-        if type(datum) != type(0):
+        if datum != 'NA' and  type(datum) != type(0):
             result.append([ticker, date] + datum)
         elif date == datetime.date.today().strftime('%Y%m%d'):
             datum = get_yahoo_tickers_live([ticker])
@@ -505,10 +520,15 @@ def get_tickers(startdate, enddate, tickers, forcefailed=0):
             >0 : retry failed data points n times
             -1 : retry failed data points, reset retry count
             -2 : ignore cache entirely, refresh ALL data points"""
+    starttime = datetime.datetime.now()
+    dbg_print(0, '%s : Fetching %s tickers' % (starttime, len(tickers)))
     result = []
     for ticker in tickers:
-        tickers = get_cached_ticker(startdate, enddate, ticker, forcefailed)
-        result.extend(tickers)
+        dbg_print(0, '%s' % (ticker))
+        tickerdata = get_cached_ticker(startdate, enddate, ticker, forcefailed)
+        result.extend(tickerdata)
+    endtime = datetime.datetime.now()
+    dbg_print(0, '%s : Done. Processed %s tickers in %s' % (endtime, len(tickers), endtime - starttime))
     return result
 
 
