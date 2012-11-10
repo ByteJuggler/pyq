@@ -52,14 +52,20 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 # 05/11/2012 - Fixed web-scraping to loop and fetch 66 records at a time.
 #              Fixed web-scraping where some data rows on some tickers use
 #              a different date format to the rest (e.g. ^DJT)
-#
+# 09/11/2012 - Added support for retrieving through proxies, potentially with
+#              basic authentication (as specified in proxy URL.)  Basic 
+#              authentication hasn't been tested.
 
-import sys, re, traceback, getopt, urllib, anydbm, datetime, os
+import sys, re, traceback, getopt, urllib2, urllib, anydbm, datetime, os
 
 Y2KCUTOFF = 60
-__version__ = "0.7.5"
+__version__ = "0.7.6"
 CACHE = 'stocks.db'
 DEBUG = 0 #Set to 1 or higher for successively more debug information.
+# Set proxy URL if applicable, otherwise None.
+# Proxy URL syntax: http://username:password@proxyhost:proxyport
+# If no user/pass is required then leave off.
+PROXYURL = None 
 
 
 def dbg_print(level, msg):
@@ -248,7 +254,7 @@ def get_oanda_fxrate(startdate, enddate, ticker):
         )
     query = ['%s=%s' % (var, val) for (var, val) in query]
     query = '&'.join(query)
-    page = urllib.urlopen(url + '?' + query).read().splitlines()
+    page = urllib2.urlopen(url + '?' + query).read().splitlines()
     table = False
     result = []
     for line in page:
@@ -369,7 +375,7 @@ def get_yahoo_ticker_scrape(startdate, enddate, ticker):
         query = '&'.join(query)
         url = url + '?' + query
         dbg_print(3, 'URL: %s' % url )
-        urldata = urllib.urlopen(url).read()
+        urldata = urllib2.urlopen(url).read()
         dbg_print(4, 'Result: %s' % urldata )
 
         match = re.search('quote data is unavailable', urldata, re.I)
@@ -419,7 +425,7 @@ def get_yahoo_ticker_historical(startdate, enddate, ticker,
     query = '&'.join(query)
     url = url + '?' + query
     dbg_print(3, 'URL: %s' % url )
-    urldata = urllib.urlopen(url).read().strip()
+    urldata = urllib2.urlopen(url).read().strip()
     dbg_print(4, 'Result: %s' % urldata )
     lines = split_lines(urldata)
     dbg_print(5, 'Split lines: %s' % lines )
@@ -566,7 +572,7 @@ def _get_yahoo_tickers_live(tickers):
     url = 'http://finance.yahoo.com/d/quotes.csv?%s' % urllib.urlencode(
             {'s': '+'.join(tickers), 'f': 'sohgl1v', 'e': '.csv'})
     dbg_print(3, 'URL: %s' % url )
-    urldata = urllib.urlopen(url).read().strip()
+    urldata = urllib2.urlopen(url).read().strip()
     dbg_print(3, 'Result: %s' % urldata )
 
     if not re.match("Missing Symbols List", urldata, re.I) is None:
@@ -664,6 +670,13 @@ def main():
     except getopt.GetoptError:
         exit_usage_error()
 
+    # setup proxy
+    if not PROXYURL is None:
+        proxy = urllib2.ProxyHandler({'http': PROXYURL})
+        auth = urllib2.HTTPBasicAuthHandler()
+        opener = urllib2.build_opener(proxy, auth, urllib2.HTTPHandler)
+        urllib2.install_opener(opener)
+        
     # process options
     stdin_tickers = []
     retryfailed = 0
