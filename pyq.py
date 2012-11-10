@@ -492,13 +492,19 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
                 data[(date, ticker)] = cache_db[repr((date, ticker))] = r_datum
 
             # Mark dates for which Yahoo legitimately aren't
-            # returning data (holidays etc)
+            # returning data (holidays etc) as permanently NA.
+            # But we assume that recent dates are truly missing and dont
+            # mark them, so we'll retry recent missing dates that Yahoo
+            # maybe doesn't have yet. Always exclude today and future dates.
             cached = [date for date, _ in data.keys()]
-            for date in all_dates(startdate, enddate):
-                if date not in cached and date < datetime.date.today().strftime('%Y%m%d'):
+            all_dates_desc=sorted(all_dates(startdate, enddate), reverse=True)
+            seen_one_date = False
+            for date in all_dates_desc:
+                if not seen_one_date and date in cached:
+                    seen_one_date = True
+                if seen_one_date and date not in cached and date < datetime.date.today().strftime('%Y%m%d'):
                     dbg_print(3, 'marking date %s as NA in DB for %s' % (date, ticker))
                     data[(date, ticker)] = cache_db[repr((date, ticker))] = repr('NA')
-            # mark not available
         except TickerDataNotFound:
             errmsg = "Data for %s between %s and %s not found or not available."
             errmsg = errmsg % (ticker, startdate, enddate)
