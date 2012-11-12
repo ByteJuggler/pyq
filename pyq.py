@@ -53,19 +53,22 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 #              Fixed web-scraping where some data rows on some tickers use
 #              a different date format to the rest (e.g. ^DJT)
 # 09/11/2012 - Added support for retrieving through proxies, potentially with
-#              basic authentication (as specified in proxy URL.)  Basic 
+#              basic authentication (as specified in proxy URL.)  Basic
 #              authentication hasn't been tested.
+# 12/11/2012 - Fixed a bug introduced through the introduction of urllib2.
+#              Basically ^DJI page was now raising an exception on no data
+#              which the code wasn't expecting.
 
 import sys, re, traceback, getopt, urllib2, urllib, anydbm, datetime, os
 
 Y2KCUTOFF = 60
-__version__ = "0.7.6"
+__version__ = "0.7.7"
 CACHE = 'stocks.db'
 DEBUG = 0 #Set to 1 or higher for successively more debug information.
 # Set proxy URL if applicable, otherwise None.
 # Proxy URL syntax: http://username:password@proxyhost:proxyport
 # If no user/pass is required then leave off.
-PROXYURL = None 
+PROXYURL = None
 
 
 def dbg_print(level, msg):
@@ -425,7 +428,20 @@ def get_yahoo_ticker_historical(startdate, enddate, ticker,
     query = '&'.join(query)
     url = url + '?' + query
     dbg_print(3, 'URL: %s' % url )
-    urldata = urllib2.urlopen(url).read().strip()
+    try:
+        urldata = urllib2.urlopen(url).read().strip()
+        #urllib2 introduced the above url throwing HTTPError 404 on no data for
+        # e.g. ^DJI.
+        #so we unfortunately have to check for it here and handle it the same
+        #way as our manual search in the page text does below.  To Refactor.
+    except urllib2.HTTPError as e:
+        if allow_scraping:
+            return get_yahoo_ticker_scrape(startdate, enddate, ticker)
+        else:
+            raise TickerDataNotFound(
+                ('Ticker/Ticker data %s for specified date range not found or '+
+                 'not available.') % ticker)
+
     dbg_print(4, 'Result: %s' % urldata )
     lines = split_lines(urldata)
     dbg_print(5, 'Split lines: %s' % lines )
@@ -600,7 +616,9 @@ def _get_yahoo_tickers_live(tickers):
                    #avg of current bid & ask as close:
                    #str((float(line[4])+float(line[5]))/2)
                  line[4], #last trade price (in lieu of close)
-                ] + line[5:] # the rest (volume)
+                 line[5], # volume
+                 line[4]  #last trade price again (in lieu of adjclose)
+                ]
                 )
     return result
 
@@ -676,7 +694,7 @@ def main():
         auth = urllib2.HTTPBasicAuthHandler()
         opener = urllib2.build_opener(proxy, auth, urllib2.HTTPHandler)
         urllib2.install_opener(opener)
-        
+
     # process options
     stdin_tickers = []
     retryfailed = 0
