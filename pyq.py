@@ -24,7 +24,7 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 # 15/03/07 - code cleanup; updated Yahoo date format, thanks to Cade Cairns
 # 11/04/12 - 0.7.1 Walter Prins: Fixed exception handling during long runs
 #            where ctrl-c would get caught by unconditional exception clauses.
-#            Fixed regular expression that detects non-existing tickers/data.
+#            Fixed regular expression that detects non-existtickers/data.
 #            Fixed fetching of current quote for multiple tickers.
 #            Cleaned up/refactored to 99% pass PyLint, Pep8 and Pychecker.
 # 13/04/12   0.7.2 WP: Start/End date specified as 0 assumes todays date.
@@ -391,7 +391,7 @@ def get_yahoo_ticker_scrape(startdate, enddate, ticker):
             result.extend(parser.output[1:])
             starting_row += 66
 
-    if match is None and len(result=0):
+    if match is None and len(result)==0:
         raise TickerDataNotFound(
             ('Ticker/Ticker data %s for specified '+
              'date range not found or not available.') % ticker)
