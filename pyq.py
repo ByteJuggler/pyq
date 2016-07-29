@@ -440,7 +440,7 @@ def get_yahoo_ticker_historical(startdate, enddate, ticker,
         else:
             raise TickerDataNotFound(
                 ('Ticker/Ticker data %s for specified date range not found or '+
-                 'not available.') % ticker)
+                 'not available. (%s)') % (ticker, str(e)))
 
     dbg_print(4, 'Result: %s' % urldata )
     lines = split_lines(urldata)
