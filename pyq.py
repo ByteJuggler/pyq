@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
+
 """
 Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 """
@@ -58,18 +60,22 @@ Retrieve stock quote data from Yahoo and forex rate data from Oanda.
 # 12/11/2012 - Fixed a bug introduced through the introduction of urllib2.
 #              Basically ^DJI page was now raising an exception on no data
 #              which the code wasn't expecting.
+# 25/07/2016 - Python 2/3 version using requests instead of urllib2 by femtotrader,
+#              remove proxy stuff - see http://docs.python-requests.org/en/master/user/advanced/
+#              use __future__ print function
 
-import sys, re, traceback, getopt, urllib2, urllib, anydbm, datetime, os
+import sys, re, traceback, getopt, datetime, os
+import requests
+
+try:
+    import anydbm
+except ImportError:
+    import dbm as anydbm
 
 Y2KCUTOFF = 60
-__version__ = "0.7.7"
+__version__ = "0.7.8"
 CACHE = 'stocks.db'
 DEBUG = 0 #Set to 1 or higher for successively more debug information.
-# Set proxy URL if applicable, otherwise None.
-# Proxy URL syntax: http://username:password@proxyhost:proxyport
-# If no user/pass is required then leave off.
-PROXYURL = None
-
 
 def dbg_print(level, msg):
     """ Utility method to handle debug output.  Messages are only printed
@@ -81,13 +87,13 @@ def dbg_print(level, msg):
             levelstr = '[%d]' % level
         else:
             levelstr = ''
-        print >> sys.stderr, '#%s %s' % (levelstr, msg)
-
+        errmsg = '#%s %s' % (levelstr, msg)
+        print(errmsg, file=sys.stderr)
 
 def print_header():
     """Print program header information to stdout"""
-    print 'pyQ v%s, by Rimon Barr:' % __version__
-    print '- Python Yahoo Quote fetching utility'
+    print('pyQ v%s, by Rimon Barr:' % __version__)
+    print('- Python Yahoo Quote fetching utility')
 
 
 def exit_version():
@@ -99,15 +105,13 @@ def exit_version():
 def exit_usage():
     """Display usage/help message to command line user."""
     print_header()
-    print """
+    print("""
 Usage: pyQ [-i] [start_date [end_date]] ticker [ticker...]
              pyQ -h | -v
-
     -h, -?, --help        display this help information
     -v, --version         display version'
     -i, --stdin           tickers fed on stdin, one per line
     -r:n, --retryfailed=n Retry failed request control value.
-
     - date formats are yyyymmdd
     - if start and/or enddate is specified as 0 they assume todays date.
     - if enddate is omitted, it is assumed to be the same as startdate
@@ -124,9 +128,8 @@ Usage: pyQ [-i] [start_date [end_date]] ticker [ticker...]
     - currency exchange rates are also available, but only historically.
         The yahoo ticker for an exchange rate is of the format USDEUR=X. The
         output format is "ticker, date, exchange".
-
     Send comments, suggestions and bug reports to <wprins@gmail.com>
-"""
+""")
     sys.exit(0)
 
 
@@ -241,23 +244,22 @@ def get_oanda_fxrate(startdate, enddate, ticker):
 
     startdate, enddate = yyyymmdd2mmddyy(startdate), yyyymmdd2mmddyy(enddate)
     url = 'http://www.oanda.com/convert/fxhistory'
-    query = (
-        ('lang', 'en'),
-        ('date1', startdate),
-        ('date', enddate),
-        ('date_fmt', 'us'),
-        ('exch', cur1),
-        ('exch2', ''),
-        ('expr', cur2),
-        ('expr2', ''),
-        ('margin_fixed', '0'),
-        ('SUBMIT', 'Get+Table'),
-        ('format', 'CSV'),
-        ('redirected', '1')
-        )
-    query = ['%s=%s' % (var, val) for (var, val) in query]
-    query = '&'.join(query)
-    page = urllib2.urlopen(url + '?' + query).read().splitlines()
+    query = {
+        'lang': 'en',
+        'date1': startdate,
+        'date': enddate,
+        'date_fmt': 'us',
+        'exch': cur1,
+        'exch2': '',
+        'expr': cur2,
+        'expr2': '',
+        'margin_fixed': '0',
+        'SUBMIT': 'Get+Table',
+        'format': 'CSV',
+        'redirected': '1'
+    }
+    response = requests.get(url, params=query)
+    page = response.text.splitlines()
     table = False
     result = []
     for line in page:
@@ -277,8 +279,11 @@ class TickerDataNotFound(Exception):
     """Exception that is raised when Yahoo reports ticker/data not found"""
     pass
 
+try:
+    from HTMLParser import HTMLParser
+except ImportError:
+    from html.parser import HTMLParser
 
-from HTMLParser import HTMLParser
 class YahooHTMLPriceTableParser(HTMLParser):
     """Parse the quote data from the Yahoo quote page HTML soup"""
     def __init__(self, ticker):
@@ -362,23 +367,21 @@ def get_yahoo_ticker_scrape(startdate, enddate, ticker):
     result = []
     while not done:
         url = 'http://finance.yahoo.com/q/hp'
-        query = (
-            ('s', ticker),
-            ('d', '%02d' % (int(enddate[1]) - 1)),
-            ('e', enddate[2]),
-            ('f', enddate[0]),
-            ('g', 'd'),
-            ('a', '%02d' % (int(startdate[1]) - 1)),
-            ('b', startdate[2]),
-            ('c', startdate[0]),
-            ('z', 66), #page controls, no of records per page, 66=max supported
-            ('y', starting_row),
-            )
-        query = ['%s=%s' % (var, str(val)) for (var, val) in query]
-        query = '&'.join(query)
-        url = url + '?' + query
+        query = {
+            's': ticker,
+            'd': '%02d' % (int(enddate[1]) - 1),
+            'e': enddate[2],
+            'f': enddate[0],
+            'g': 'd',
+            'a': '%02d' % (int(startdate[1]) - 1),
+            'b': startdate[2],
+            'c': startdate[0],
+            'z': 66, #page controls, no of records per page, 66=max supported
+            'y': starting_row,
+        }
         dbg_print(3, 'URL: %s' % url )
-        urldata = urllib2.urlopen(url).read()
+        response = requests.get(url, params=query)
+        urldata = response.text
         dbg_print(4, 'Result: %s' % urldata )
 
         match = re.search('quote data is unavailable', urldata, re.I)
@@ -413,28 +416,27 @@ def get_yahoo_ticker_historical(startdate, enddate, ticker,
     parsed_startdate = parse_date(startdate)
     parsed_enddate = parse_date(enddate)
     url = 'http://ichart.finance.yahoo.com/table.csv'
-    query = (
-        ('a', '%02d' % (int(parsed_startdate[1]) - 1)),
-        ('b', parsed_startdate[2]),
-        ('c', parsed_startdate[0]),
-        ('d', '%02d' % (int(parsed_enddate[1]) - 1)),
-        ('e', parsed_enddate[2]),
-        ('f', parsed_enddate[0]),
-        ('s', ticker),
-        ('y', '0'),
-        ('g', 'd'),
-        ('ignore', '.csv'),)
-    query = ['%s=%s' % (var, str(val)) for (var, val) in query]
-    query = '&'.join(query)
-    url = url + '?' + query
+    query = {
+        'a': '%02d' % (int(parsed_startdate[1]) - 1),
+        'b': parsed_startdate[2],
+        'c': parsed_startdate[0],
+        'd': '%02d' % (int(parsed_enddate[1]) - 1),
+        'e': parsed_enddate[2],
+        'f': parsed_enddate[0],
+        's': ticker,
+        'y': '0',
+        'g': 'd',
+        'ignore': '.csv'
+    }
     dbg_print(3, 'URL: %s' % url )
     try:
-        urldata = urllib2.urlopen(url).read().strip()
+        response = requests.get(url, params=query)
+        urldata = response.text
         #urllib2 introduced the above url throwing HTTPError 404 on no data for
         # e.g. ^DJI.
         #so we unfortunately have to check for it here and handle it the same
         #way as our manual search in the page text does below.  To Refactor.
-    except urllib2.HTTPError as e:
+    except requests.HTTPError as e:
         if allow_scraping:
             return get_yahoo_ticker_scrape(startdate, enddate, ticker)
         else:
@@ -530,7 +532,8 @@ def get_cached_ticker(startdate, enddate, ticker, forcefailed=0):
         except TickerDataNotFound:
             errmsg = "Data for %s between %s and %s not found or not available."
             errmsg = errmsg % (ticker, startdate, enddate)
-            print >> sys.stderr, errmsg
+            print(errmsg, file=sys.stderr)
+
     # failed
     cached = [date for date, row in data.keys()]
     failed = [date for date in missing if date not in cached]
@@ -585,10 +588,11 @@ def _get_yahoo_tickers_live(tickers):
     dbg_print(1, 'Querying Yahoo! live for %s' % (tickers))
     # For a reference to how this URL is constructed, see here:
     #http://www.gummy-stuff.org/Yahoo-data.htm
-    url = 'http://finance.yahoo.com/d/quotes.csv?%s' % urllib.urlencode(
-            {'s': '+'.join(tickers), 'f': 'sohgl1v', 'e': '.csv'})
+    url = 'http://finance.yahoo.com/d/quotes.csv'
+    params = {'s': '+'.join(tickers), 'f': 'sohgl1v', 'e': '.csv'}
     dbg_print(3, 'URL: %s' % url )
-    urldata = urllib2.urlopen(url).read().strip()
+    response = requests.get(url, params=params)
+    urldata = response.text.strip()
     dbg_print(3, 'Result: %s' % urldata )
 
     if not re.match("Missing Symbols List", urldata, re.I) is None:
@@ -632,7 +636,8 @@ def get_yahoo_tickers_live(tickers):
             result += _get_yahoo_tickers_live(tickers[:150])
         except TickerDataNotFound:
             errmsg = "Failed to find live quotes for tickers %s" % tickers
-            print >> sys.stderr, errmsg
+            print(errmsg, file=sys.stderr)
+
         tickers = tickers[150:]
     return result
 
@@ -688,13 +693,6 @@ def main():
     except getopt.GetoptError:
         exit_usage_error()
 
-    # setup proxy
-    if not PROXYURL is None:
-        proxy = urllib2.ProxyHandler({'http': PROXYURL})
-        auth = urllib2.HTTPBasicAuthHandler()
-        opener = urllib2.build_opener(proxy, auth, urllib2.HTTPHandler)
-        urllib2.install_opener(opener)
-
     # process options
     stdin_tickers = []
     retryfailed = 0
@@ -725,7 +723,7 @@ def main():
         result = get_tickers(startdate, enddate, tickers, retryfailed)
 
     for line in result:
-        print ','.join(line)
+        print(','.join(line))
 
 
 try:
